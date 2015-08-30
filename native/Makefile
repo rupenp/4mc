@@ -8,7 +8,7 @@
 
 RELEASE=r121
 DESTDIR=
-PREFIX=/usr
+PREFIX=$(HOME)/.local
 CC:=$(CC)
 CFLAGS?= -O3
 #CFLAGS?= -ggdb

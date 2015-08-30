@@ -126,6 +126,66 @@ static char* programName;
     exit(error);                                                          \
 }
 
+#define APPEND_FILESPEC(root, name) \
+    root=snocString((root), (name))
+#define ISFLAG(s) (strcmp(aa->name, (s))==0)
+#define True  ((Bool)1)
+#define False ((Bool)0)
+
+static void    outOfMemory           ( void );
+static void*   myMalloc     ( int );
+
+typedef unsigned char   Bool;
+
+/*---------------------------------------------*/
+static 
+void outOfMemory ( void )
+{
+   fprintf ( stderr,
+             "couldn't allocate enough memory\n");
+}
+
+/*---------------------------------------------*/
+static 
+void *myMalloc ( int n )
+{
+   void* p;
+
+   p = malloc ( (size_t)n );
+   if (p == NULL) outOfMemory ();
+   return p;
+}
+
+
+/*---------------------------------------------*/
+static 
+Cell *mkCell ( void )
+{
+   Cell *c;
+
+   c = (Cell*) myMalloc ( sizeof ( Cell ) );
+   c->name = NULL;
+   c->link = NULL;
+   return c;
+}
+
+
+/*---------------------------------------------*/
+static 
+Cell *snocString ( Cell *root, char *name )
+{
+   if (root == NULL) {
+      Cell *tmp = mkCell();
+      tmp->name = (char*) myMalloc ( 5 + strlen(name) );
+      strcpy ( tmp->name, name );
+      return tmp;
+   } else {
+      Cell *tmp = root;
+      while (tmp->link != NULL) tmp = tmp->link;
+      tmp->link = snocString ( tmp->link, name );
+      return root;
+   }
+}
 
 
 int usage(void)
@@ -169,12 +229,14 @@ void waitEnter(void)
 int main(int argc, char** argv)
 {
     int i, cLevel=0,  decode=0,  filenamesStart=2, legacy_format=0,
-        forceStdout=0, forceCompress=0, promptPause=0, overwriteMode=0;
+        forceStdout=0, forceCompress=0, promptPause=0, overwriteMode=0,
+        multipleFiles=0;
 
     // Display level modes exactly like LZ4 CLI
     // 0 : no display  // 1: errors  // 2 : + result + interaction + warnings ;  // 3 : + progression;  // 4 : + information
     int displayLevel = 2;
 
+    Cell   *argList;
     char* input_filename=0;
     char* output_filename=0;
     char* dynNameSpace=0;
@@ -183,6 +245,12 @@ int main(int argc, char** argv)
 
     // Init
     programName = argv[0];
+   /*-- Copy flags from env var BZIP2, and 
+        expand filename wildcards in arg list.
+   --*/
+   argList = NULL;
+   for (i = 1; i <= argc-1; i++)
+      APPEND_FILESPEC(argList, argv[i]);
 
     // command switches
     for(i=1; i<argc; i++)
@@ -237,6 +305,9 @@ int main(int argc, char** argv)
                     // Force stdout, even if stdout==console
                 case 'c': forceStdout=1; output_filename=stdoutmark; displayLevel=1; break;
 
+                    // multiple files as input
+                case 'j': multipleFiles=1; displayLevel=1; break;
+
                     // Test
                 case 't': decode=1; output_filename=nulmark; break;
 
@@ -270,61 +341,79 @@ int main(int argc, char** argv)
 
     DISPLAYLEVEL(3, WELCOME_MESSAGE);
 
-    // No input filename ==> use stdin
-    if(!input_filename) { input_filename=stdinmark; }
+    if (multipleFiles && decode && forceStdout) {
 
-    // Check if input or output are defined as console; trigger an error in this case
-    if (!strcmp(input_filename, stdinmark)  && IS_CONSOLE(stdin)) badusage(displayLevel);
+       Cell   *aa;
+       output_filename=stdoutmark;
+       fourMcDecompressMultipleFilenames(displayLevel, overwriteMode, argList, output_filename);
+       aa = argList;
+       while (aa != NULL) {
+          Cell* aa2 = aa->link;
+          if (aa->name != NULL) free(aa->name);
+          free(aa);
+          aa = aa2;
+       }
 
 
-    // No output filename ==> try to select one automatically like lz4
-    while (!output_filename)
-    {
-        if (!IS_CONSOLE(stdout)) { output_filename=stdoutmark; break; }   // Default to stdout whenever possible (i.e. not a console)
-        if ((!decode) && !(forceCompress))   // auto-determine compression or decompression, based on file extension
-        {
-            size_t l = strlen(input_filename);
-            if (!strcmp(input_filename+(l-4), FOURMC_EXTENSION)) decode=1;
-        }
-        if (!decode)   // compression to file
-        {
-            size_t l = strlen(input_filename);
-            dynNameSpace = (char*)calloc(1,l+5);
-            output_filename = dynNameSpace;
-            strcpy(output_filename, input_filename);
-            strcpy(output_filename+l, FOURMC_EXTENSION);
-            DISPLAYLEVEL(2, "Compressed filename will be : %s \n", output_filename);
-            break;
-        }
-        // decompression to file (automatic name will work only if input filename has correct format extension)
-        {
-            size_t outl;
-            size_t inl = strlen(input_filename);
-            dynNameSpace = (char*)calloc(1,inl+1);
-            output_filename = dynNameSpace;
-            strcpy(output_filename, input_filename);
-            outl = inl;
-            if (inl>4)
-                while ((outl >= inl-4) && (input_filename[outl] ==  extension[outl-inl+4])) output_filename[outl--]=0;
-            if (outl != inl-5) { DISPLAYLEVEL(1, "Cannot determine an output filename\n"); badusage(displayLevel); }
-            DISPLAYLEVEL(2, "Decoding file %s \n", output_filename);
-        }
-    }
+       return 0;
 
-    // No warning message in pure pipe mode (stdin + stdout)
-    if (!strcmp(input_filename, stdinmark) && !strcmp(output_filename,stdoutmark) && (displayLevel==2)) displayLevel=1;
-
-    // Check if input or output are defined as console; trigger an error in this case
-    if (!strcmp(input_filename, stdinmark)  && IS_CONSOLE(stdin)                 ) badusage(displayLevel);
-    if (!strcmp(output_filename,stdoutmark) && IS_CONSOLE(stdout) && !forceStdout) badusage(displayLevel);
-
-    if (decode) {
-        fourMcDecompressFileName(displayLevel, overwriteMode, input_filename, output_filename);
     } else {
-        fourMCcompressFilename(displayLevel, overwriteMode, input_filename, output_filename, cLevel);
-    }
+        // No input filename ==> use stdin
+        if(!input_filename) { input_filename=stdinmark; }
 
-    if (promptPause) waitEnter();
-    free(dynNameSpace);
-    return 0;
+        // Check if input or output are defined as console; trigger an error in this case
+        if (!strcmp(input_filename, stdinmark)  && IS_CONSOLE(stdin)) badusage(displayLevel);
+
+
+        // No output filename ==> try to select one automatically like lz4
+        while (!output_filename)
+        {
+            if (!IS_CONSOLE(stdout)) { output_filename=stdoutmark; break; }   // Default to stdout whenever possible (i.e. not a console)
+            if ((!decode) && !(forceCompress))   // auto-determine compression or decompression, based on file extension
+            {
+                size_t l = strlen(input_filename);
+                if (!strcmp(input_filename+(l-4), FOURMC_EXTENSION)) decode=1;
+            }
+            if (!decode)   // compression to file
+            {
+                size_t l = strlen(input_filename);
+                dynNameSpace = (char*)calloc(1,l+5);
+                output_filename = dynNameSpace;
+                strcpy(output_filename, input_filename);
+                strcpy(output_filename+l, FOURMC_EXTENSION);
+                DISPLAYLEVEL(2, "Compressed filename will be : %s \n", output_filename);
+                break;
+            }
+            // decompression to file (automatic name will work only if input filename has correct format extension)
+            {
+                size_t outl;
+                size_t inl = strlen(input_filename);
+                dynNameSpace = (char*)calloc(1,inl+1);
+                output_filename = dynNameSpace;
+                strcpy(output_filename, input_filename);
+                outl = inl;
+                if (inl>4)
+                    while ((outl >= inl-4) && (input_filename[outl] ==  extension[outl-inl+4])) output_filename[outl--]=0;
+                if (outl != inl-5) { DISPLAYLEVEL(1, "Cannot determine an output filename\n"); badusage(displayLevel); }
+                DISPLAYLEVEL(2, "Decoding file %s \n", output_filename);
+            }
+        }
+
+        // No warning message in pure pipe mode (stdin + stdout)
+        if (!strcmp(input_filename, stdinmark) && !strcmp(output_filename,stdoutmark) && (displayLevel==2)) displayLevel=1;
+
+        // Check if input or output are defined as console; trigger an error in this case
+        if (!strcmp(input_filename, stdinmark)  && IS_CONSOLE(stdin)                 ) badusage(displayLevel);
+        if (!strcmp(output_filename,stdoutmark) && IS_CONSOLE(stdout) && !forceStdout) badusage(displayLevel);
+
+        if (decode) {
+            fourMcDecompressFileName(displayLevel, overwriteMode, input_filename, output_filename);
+        } else {
+            fourMCcompressFilename(displayLevel, overwriteMode, input_filename, output_filename, cLevel);
+        }
+
+        if (promptPause) waitEnter();
+        free(dynNameSpace);
+        return 0;
+    }
 }

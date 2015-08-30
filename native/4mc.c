@@ -593,3 +593,44 @@ int fourMcDecompressFileName(int displayLevel, int overwrite, char* input_filena
     return 0;
 }
 
+int fourMcDecompressMultipleFilenames(int displayLevel, int overwrite, Cell* input_filenames, char* output_filename)
+{
+    Bool decodable         = True;
+    Cell   *aa;
+    unsigned long long filesize = 0, decodedSize=0;
+    FILE* finput;
+    FILE* foutput;
+    clock_t start, end;
+    start = clock();
+    for (aa = input_filenames; aa != NULL; aa = aa->link) {
+       if (ISFLAG("--")) { decodable = False; continue; }
+       if (aa->name[0] == '-' && decodable) continue;
+       if (!strcmp(aa->name, stdinmark) && !strcmp(output_filename, stdoutmark) && (displayLevel==2)) displayLevel=1;
+       // Init
+       openIOFileHandles(displayLevel, overwrite, aa->name, output_filename, &finput, &foutput);
+       // Loop over multiple streams
+       do
+       {
+           decodedSize = selectDecoder(displayLevel, finput, foutput);
+           filesize += decodedSize;
+       } while (decodedSize);
+
+       // Close
+       fclose(finput);
+   }
+
+    // Final Status
+    end = clock();
+    CONSOLE_PRINT_LEVEL(2, "\r%79s\r", "");
+    CONSOLE_PRINT_LEVEL(2, "Successfully decoded %llu bytes \n", filesize);
+    {
+        double seconds = (double)(end - start)/CLOCKS_PER_SEC;
+        CONSOLE_PRINT_LEVEL(4, "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
+    }
+
+    fclose(foutput);
+
+    // Error status = OK
+    return 0;
+}
+

@@ -32,13 +32,26 @@
       - LZ4 source repository : http://code.google.com/p/lz4/
 **/
 
+typedef
+   struct zzzz {
+      char        *name;
+      struct zzzz *link;
+   }
+   Cell;
+
 
 int fourMCcompressFilename  (int displayLevel, int overwrite, char* input_filename, char* output_filename, int compressionlevel);
 int fourMcDecompressFileName(int displayLevel, int overwrite, char* input_filename, char* output_filename);
-
+int fourMcDecompressMultipleFilenames(int displayLevel, int overwrite, Cell* input_filenames, char* output_filename);
 
 // null device, stdin and stdout, used by both cli and 4mc
 
+#define True  ((Bool)1)
+#define False ((Bool)0)
+
+typedef unsigned char   Bool;
+
+#define ISFLAG(s) (strcmp(aa->name, (s))==0)
 #define NULL_OUTPUT "null"
 static char stdinmark[] = "stdin";
 static char stdoutmark[] = "stdout";
@@ -47,4 +60,5 @@ static char nulmark[] = "nul";
 #else
 static char nulmark[] = "/dev/null";
 #endif
+
 
